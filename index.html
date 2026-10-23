@@ -1,0 +1,112 @@
+<!DOCTYPE html>
+<html lang="vi"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>BMS – Giám sát thang máy ELV01</title>
+<style>
+:root{--bg:#eceff3;--fg:#1b1f24;--card:#fff;--bd:#cfd5dc;box-sizing:border-box;padding-top:env(safe-area-inset-top,0px);padding-bottom:env(safe-area-inset-bottom,0px)}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#0f1318;--fg:#e6e9ee;--card:#1a1f27;--bd:#2f3743}}
+:root[data-theme="dark"]{--bg:#0f1318;--fg:#e6e9ee;--card:#1a1f27;--bd:#2f3743}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+*{box-sizing:border-box}
+body{margin:0 auto;padding:12px;background:var(--bg);color:var(--fg);font:15px/1.4 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif;max-width:980px}
+.hmi{background:#000;color:#fff;border-radius:14px;padding:16px}
+.hmi h1{font-size:17px;margin:0 0 12px;font-weight:600}
+.main{display:grid;grid-template-columns:150px 1fr;gap:12px}
+.fls{display:flex;flex-direction:column;gap:6px}
+.fls button{flex:1;padding:10px 0;background:#a6a6a6;color:#fff;border:0;border-radius:4px;font:inherit;font-size:14px;cursor:pointer}
+.fls button.cur{background:#ed7d31}.fls button.call{outline:2px solid #ffc000}
+.tiles{display:grid;grid-template-columns:repeat(3,1fr);gap:10px}
+.t{background:#545454;border-radius:8px;padding:10px 14px;min-height:92px}
+.t small{color:#ffc000;font-size:12px;display:block}
+.t b{font-size:21px;display:block;margin-top:4px}
+.t i{font-style:normal;font-size:11px;color:#d6d6d6;display:block;margin-top:3px}
+.bot{display:grid;grid-template-columns:1fr auto auto auto;gap:10px;margin-top:12px}
+#alm{border-radius:4px;padding:12px;font-size:14px;background:#4472c4}
+#alm.md{background:#ed7d31}#alm.hi{background:#c00000}
+.bot button{border:0;border-radius:6px;padding:0 18px;min-height:44px;font:inherit;font-size:14px;color:#fff;background:#ed7d31;cursor:pointer}
+#ba{background:#44546a;color:#000}.bot button.on{outline:3px solid #fff}
+@media(max-width:640px){.main{grid-template-columns:1fr}.fls{flex-direction:row}.tiles{grid-template-columns:repeat(2,1fr)}.bot{grid-template-columns:1fr 1fr 1fr}#alm{grid-column:1/-1}}
+.card{background:var(--card);border:1px solid var(--bd);border-radius:10px;padding:12px;margin-top:12px}
+.card h2{font-size:15px;margin:0 0 8px}
+.row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;font-size:14px}
+.row button,select{font:inherit;padding:7px 11px;border:1px solid var(--bd);border-radius:8px;background:var(--card);color:var(--fg);cursor:pointer}
+.row button.on{background:#ed7d31;color:#000;border-color:#ed7d31}
+#log{font:12px ui-monospace,Consolas,monospace;white-space:pre-wrap;min-height:90px}
+</style></head><body>
+<div class="hmi"><h1>BMS – Giám sát thang máy ELV01</h1>
+<div class="main"><div class="fls" id="fl"></div><div class="tiles" id="tl"></div></div>
+<div class="bot"><div id="alm"></div><button id="ba">Acknowledge</button><button id="bfr">Fire Recall</button><button id="blk">Lock</button></div></div>
+<div class="card"><h2>Bảng giả lập hiện trường (đầu vào của PLC)</h2><div class="row">
+<label>Tải: <input type="range" id="ld" min="0" max="800" step="10" value="320"> <b id="lv">320</b> kg</label>
+<button id="bo">Vật cản lố cửa (cảm biến không thấy)</button><button id="be">Dừng khẩn</button><button id="bf">Tín hiệu hệ thống báo cháy</button><button id="bd">Lệnh LED (BMS)</button><button id="br">Reset lỗi</button></div>
+<div class="row" style="margin-top:8px">Báo cháy: <select id="ss"><option value="n">tầng gần nhất, ưu tiên tầng dưới</option><option value="f">về tầng 1</option></select> Tốc độ mô phỏng: <select id="sk"><option value="1">×1</option><option value="3" selected>×3</option><option value="6">×6</option></select><span style="font-size:12px">Bấm danh sách tầng bên trái để gọi thang.</span></div></div>
+<div class="card"><h2>Nhật ký PLC gửi BMS</h2><div id="log"></div></div>
+<script>
+const $=i=>document.getElementById(i),f=(x,n)=>x.toFixed(n).replace('.',',');
+const Mc=700,Mcw=1015,Q=630,g=9.81,eta=.6,N=5;
+const S={pos:0,dir:0,v:0,a:0,via:null,mt:0,trips:0,st:'IDLE',door:0,cur:1.5,calls:[0,0,0,0,0],tgt:-1,t:0,retry:0,obst:false,ovl:0,ct:0,fc:'',estop:false,lock:false,led:false,fireSig:false,recall:false,fire:false,over:false,load:320,K:3,strat:'n',ack:{},aa:0,log:[]};
+function L(m){S.log.unshift(new Date().toLocaleTimeString('vi-VN')+'  '+m);S.log.length=Math.min(S.log.length,8)}
+function near(){const lo=Math.floor(S.pos+1e-6),hi=Math.ceil(S.pos-1e-6);return S.pos-lo<=hi-S.pos?lo:hi}
+function pick(){let b=null;for(let i=0;i<N;i++)if(S.calls[i]){const d=Math.abs(i-S.pos)+(S.dir&&(i-S.pos)*S.dir<0?10:0);if(!b||d<b.d||(d===b.d&&i<b.i))b={i,d}}return b?b.i:null}
+function here(){return Math.abs(S.pos-Math.round(S.pos))<.01}
+function step(){
+const dt=.05;S.t+=dt;S.cur=1.5;S.fire=S.fireSig||S.recall;S.over=S.load>1.1*Q;
+if(S.estop){S.v=0;S.cur=0;return}
+if(S.fire&&S.st!=='FIRE'&&S.st!=='FIREPARK'){S.calls=[0,0,0,0,0];S.tgt=S.strat==='f'?0:near();S.mt=0;S.via=(S.v>.01&&(S.tgt-S.pos)*S.dir<0)?(S.dir>0?Math.ceil(S.pos):Math.floor(S.pos)):null;S.st='FIRE';L('Báo cháy: về tầng '+(S.tgt+1)+(S.strat==='f'?' (Fire Recall)':' (gần nhất, ưu tiên tầng dưới)')+(S.via!==null?', dừng kỹ thuật tầng '+(S.via+1)+' trước':''))}
+if(S.over&&S.st==='CLOSING')S.st='OPENING';
+const vm=1/3.3,ac=.8/3.3;
+const mv=t=>{const d=t-S.pos,r=Math.abs(d);if(r<.003&&S.v<.03){S.pos=t;S.v=0;return true}S.dir=Math.sign(d)||S.dir;S.v=Math.max(.02,Math.min(S.v+ac*dt,vm,Math.sqrt(2*ac*r)));S.pos+=Math.sign(d)*Math.min(S.v*dt,r);return false};
+const op=()=>{S.door=Math.min(100,S.door+40*dt);return S.door>=100};
+switch(S.st){
+case 'IDLE':{S.dir=0;const c=pick();if(c!==null){S.tgt=c;S.ct=0;S.st=(c===Math.round(S.pos)&&here())?'OPENING':'CLOSING'}}break;
+case 'CLOSING':{
+let nd=S.door-33.3*dt;if(S.obst&&S.door>60&&nd<60)nd=60;
+const blk=S.obst&&S.door<=60.01;S.ct+=dt;
+if(blk){S.cur=8;S.ovl+=dt;if(S.ovl>.4){S.ovl=0;S.retry++;L('Quá dòng cửa ('+S.retry+'/3): đảo chiều mở cửa');S.st='OPENING';if(S.retry>=3){S.st='FAULT';S.fc='door';L('ALM06: vướng 3 lần, giữ cửa mở, còi báo')}}}
+else{S.ovl=0;S.cur=2.5;S.door=Math.max(0,nd);if(S.door===0){S.retry=0;S.st=S.tgt>=0?'MOVING':'IDLE'}}
+if(S.ct>12&&S.st==='CLOSING'){S.st='FAULT';S.fc='door';L('ALM06: đóng cửa quá 12 s')}
+}break;
+case 'MOVING':S.cur=4;S.mt+=dt;if(mv(S.tgt)){S.mt=0;S.trips++;S.calls[S.tgt]=0;S.st='OPENING';L('Đến tầng '+(S.tgt+1))}else if(S.mt>30){S.st='FAULT';S.fc='time';S.v=0;L('ALM07: quá Tmax 30 s')}break;
+case 'OPENING':S.calls[Math.round(S.pos)]=0;if(op()){S.st='DWELL';S.t=0}break;
+case 'DWELL':S.door=100;if(S.over)S.t=0;if(S.t>5){const c=pick();S.tgt=c===null?-1:c;S.ct=0;S.st='CLOSING'}break;
+case 'FIRE':{S.cur=4;S.mt+=dt;if(mv(S.via!==null?S.via:S.tgt)){S.mt=0;if(S.via!==null){S.via=null;L('Dừng kỹ thuật, đảo chiều về tầng '+(S.tgt+1))}else{S.st='FIREPARK';L('Dừng tầng '+(S.tgt+1)+', mở cửa, ngừng phục vụ')}}else if(S.mt>30){S.st='FAULT';S.fc='time';S.v=0}}break;
+case 'FIREPARK':S.dir=0;op();if(!S.fire){S.st='DWELL';S.t=0;L('Hết báo cháy: phục vụ lại')}break;
+case 'FAULT':S.dir=0;op();break;
+}}
+function tick(){const v0=S.dir*S.v*3.3;step();S.a=(S.dir*S.v*3.3-v0)/.05}
+function call(i){if(S.fire||S.lock||S.st==='FAULT'||S.estop){L('Bỏ qua lệnh gọi (cháy, Lock, lỗi hoặc dừng khẩn)');return}if(S.st==='DWELL'&&i===Math.round(S.pos)&&here()){S.t=0;return}S.calls[i]=1}
+const mode=()=>S.estop?'Dừng khẩn':S.lock?'Bảo trì (Lock)':S.fire?'Fire Recall':S.over?'Quá tải':S.st==='FAULT'?'Lỗi':S.st==='IDLE'?'Idle':'Normal';
+function render(){
+const mvg=!S.estop&&(S.st==='MOVING'||S.st==='FIRE'),tt=S.via!==null?S.via:S.tgt;
+const dirT=mvg?(tt>S.pos?'Lên':'Xuống'):'Đứng yên';
+const doorT=S.st==='FAULT'&&S.fc==='door'?'Mở (vướng, ALM06)':S.door<=0?'Đóng':S.door>=100?'Mở':(S.st==='CLOSING'?'Đang đóng':'Đang mở');
+const vu=S.dir*S.v*3.3,Fn=(Mc+S.load-Mcw)*g+(Mc+S.load+Mcw)*Math.max(-.8,Math.min(.8,S.a));
+let P=mvg?Fn*vu/1000:0;P=P>0?P/eta:P*eta;
+const Pt=Math.abs(Mc+S.load-Mcw)*g/1000/eta,Pk=(Mc+S.load)*g/1000/eta;
+const T1=(Mc+S.load)*g/2,T2=Mcw*g/2;
+const buzz=S.fire||S.over||S.st==='FAULT';
+const fs=S.fire?'Đích: tầng '+(tt+1)+(S.via!==null?' (dừng kỹ thuật tầng '+(S.via+1)+')':'')+(S.strat==='f'?' · Fire Recall':' · gần nhất, ưu tiên dưới'):'';
+const T=[['Hướng',dirT,''],['Cửa',doorT,''],['Tải',S.load+' / 630 kg',S.over?'QUÁ TẢI (ngưỡng 693 kg)':''],
+['Chế độ',mode(),''],['Báo cháy',S.fireSig?'Có':(S.recall?'Lệnh BMS':'Không'),fs],['LED / Còi',(S.led||S.fire?'Sáng':'Tắt')+' / '+(buzz?'Kêu':'Tắt'),''],
+['Công suất động cơ',f(P,2)+' kW','Tĩnh: '+f(Pt,2)+' kW có ĐT · '+f(Pk,1)+' kW không ĐT'],
+['Lực lên puly T1 / T2 (2:1)',f(T1/1000,2)+' / '+f(T2/1000,2)+' kN','T1−T2 = '+f(T1-T2,0)+' N · M = '+f((T1-T2)*.16,0)+' N·m'],
+['Cửa: dòng động cơ',f(S.cur,1)+' A','Thử đóng '+S.retry+'/3 · ngưỡng ngắt 6 A']];
+$('tl').innerHTML=T.map(t=>'<div class="t"><small>'+t[0]+'</small><b>'+t[1]+'</b>'+(t[2]?'<i>'+t[2]+'</i>':'')+'</div>').join('');
+[...$('fl').children].forEach(b=>{const i=+b.dataset.i;b.classList.toggle('cur',i===Math.round(S.pos));b.classList.toggle('call',!!S.calls[i])});
+const A=[['ALM02','Quá tải','Medium',S.over],['ALM03','Dừng khẩn','High',S.estop],['ALM04','Báo cháy','High',S.fire],['ALM06','Cửa không đóng được','Medium',S.st==='FAULT'&&S.fc==='door'],['ALM07','Quá thời gian chạy','Medium',S.st==='FAULT'&&S.fc==='time']];
+const act=A.filter(a=>{if(!a[3])delete S.ack[a[0]];else if(S.aa)S.ack[a[0]]=1;return a[3]});S.aa=0;
+$('alm').textContent=act.length?'Cảnh báo: '+act.map(a=>a[0]+' '+a[1]+' ('+a[2]+')'+(S.ack[a[0]]?' ✔ đã xác nhận':'')).join('  |  '):'Cảnh báo: không có cảnh báo đang hoạt động';
+$('alm').className=act.some(a=>a[2]==='High')?'hi':act.length?'md':'';
+$('bfr').classList.toggle('on',S.recall);$('blk').classList.toggle('on',S.lock);
+$('log').textContent=S.log.join('\n')+'\nELV01_TRIPS = '+S.trips;}
+for(let i=N-1;i>=0;i--){const b=document.createElement('button');b.textContent='Tầng '+(i+1);b.dataset.i=i;b.onclick=()=>call(i);$('fl').appendChild(b)}
+const tg=(id,k,m1,m0)=>{$(id).onclick=()=>{S[k]=!S[k];$(id).classList.toggle('on',S[k]);L(S[k]?m1:m0)}};
+tg('bfr','recall','BMS: lệnh Fire Recall','BMS: hủy Fire Recall');tg('blk','lock','BMS Lock: khóa gọi tầng','BMS bỏ Lock');
+tg('bo','obst','Có vật cản lố cửa, cảm biến không phát hiện','Đã gỡ vật cản');tg('be','estop','Dừng khẩn: cắt động cơ kéo và cửa','Nhả dừng khẩn');
+tg('bf','fireSig','Hệ thống báo cháy: tín hiệu = 1','Hệ thống báo cháy: reset');tg('bd','led','BMS: bật LED','BMS: tắt LED');
+$('ba').onclick=()=>{S.aa=1};
+$('br').onclick=()=>{if(S.st!=='FAULT')return;if(S.obst&&S.fc==='door'){L('Còn vật cản: hãy gỡ trước khi reset');return}S.retry=0;S.mt=0;S.ct=0;if(here()){S.st='DWELL';S.t=0}else{S.tgt=near();S.st='MOVING'}L('Reset lỗi')};
+$('ld').oninput=e=>{S.load=+e.target.value;$('lv').textContent=S.load};
+$('ss').onchange=e=>{S.strat=e.target.value==='f'?'f':'n'};$('sk').onchange=e=>{S.K=+e.target.value};
+L('Khởi động PLC, kết nối BMS');setInterval(()=>{for(let i=0;i<S.K;i++)tick();render()},50);
+</script></body></html>
